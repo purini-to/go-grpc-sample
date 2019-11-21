@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-web
+spec:
+  selector:
+    matchLabels:
+      app: grpc-web
+  template:
+    metadata:
+      labels:
+        app: grpc-web
+    spec:
+      containers:
+        - name: grpc-web
+          image: purini-to/go-grpc-sample
+          imagePullPolicy: IfNotPresent
+          args:
+            - start
+            - --cat-endpoint
+            - dns:///grpc-server-service.default.svc.cluster.local:6565
+          resources:
+            limits:
+              memory: "128Mi"
+              cpu: "128m"
+          ports:
+            - containerPort: 8080

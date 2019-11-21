@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
+
+	"google.golang.org/grpc/balancer/roundrobin"
 
 	"github.com/purini-to/go-grpc-sample/pkg/cat"
 
@@ -49,7 +52,15 @@ func RunServerStart(ctx context.Context, opts *ServerStartOptions) error {
 		return errors.Wrap(err, "could not initialize log")
 	}
 
-	logger.Info("Go gRPC sample starting...")
+	logger.Info("Go gRPC sample starting...", zap.String("version", "v0.0.2"))
+
+	conn, err := grpc.Dial(opts.catServiceEndpoint, grpc.WithInsecure(), grpc.WithBalancerName(roundrobin.Name))
+	if err != nil {
+		return errors.Wrap(err, "could not gRPC connection")
+	}
+	defer conn.Close()
+
+	client := cat.NewCatClient(conn)
 
 	r := chi.NewRouter()
 
@@ -58,19 +69,28 @@ func RunServerStart(ctx context.Context, opts *ServerStartOptions) error {
 	})
 
 	r.Get("/cat/{catName}", func(w http.ResponseWriter, r *http.Request) {
+		defer func(t time.Time) {
+			logger.Info(
+				"Access log",
+				zap.String("uri", r.URL.String()),
+				zap.String("method", r.Method),
+				zap.Duration("duration", time.Since(t)),
+			)
+		}(time.Now())
 		catName := chi.URLParam(r, "catName")
 
-		conn, err := grpc.Dial(opts.catServiceEndpoint, grpc.WithInsecure())
-		if err != nil {
-			logger.Error("Could not gRPC connection", zap.Error(err))
-			w.Write([]byte(err.Error()))
-			return
-		}
-		defer conn.Close()
+		//conn, err := grpc.Dial(opts.catServiceEndpoint, grpc.WithInsecure())
+		//if err != nil {
+		//	logger.Error("Could not gRPC connection", zap.Error(err))
+		//	w.Write([]byte(err.Error()))
+		//	return
+		//}
+		//defer conn.Close()
+		//
+		//client := cat.NewCatClient(conn)
 
-		client := cat.NewCatClient(conn)
 		message := &cat.GetMyCatMessage{TargetCat: catName}
-		res, err := client.GetMyCat(ctx, message)
+		res, err := client.GetMyCat(r.Context(), message)
 		if err != nil {
 			logger.Error("Failed GetMyCat service.", zap.Error(err), zap.String("TargetCat", catName))
 			w.Write([]byte(err.Error()))
