@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"google.golang.org/grpc/balancer/roundrobin"
+	grpc_retry "github.com/grpc-ecosystem/go-grpc-middleware/retry"
+
+	"github.com/go-chi/chi/middleware"
 
 	"github.com/purini-to/go-grpc-sample/pkg/cat"
 
@@ -52,9 +54,16 @@ func RunServerStart(ctx context.Context, opts *ServerStartOptions) error {
 		return errors.Wrap(err, "could not initialize log")
 	}
 
-	logger.Info("Go gRPC sample starting...", zap.String("version", "v0.0.2"))
+	logger.Info("Go gRPC sample starting...", zap.String("version", "v0.0.9"))
 
-	conn, err := grpc.Dial(opts.catServiceEndpoint, grpc.WithInsecure(), grpc.WithBalancerName(roundrobin.Name))
+	conn, err := grpc.Dial(opts.catServiceEndpoint,
+		grpc.WithInsecure(),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig": [{"round_robin":{}}]}`),
+		grpc.WithUnaryInterceptor(grpc_retry.UnaryClientInterceptor(
+			grpc_retry.WithMax(3),
+			grpc_retry.WithBackoff(grpc_retry.BackoffExponentialWithJitter(50*time.Millisecond, 0.10)),
+		)),
+	)
 	if err != nil {
 		return errors.Wrap(err, "could not gRPC connection")
 	}
@@ -63,6 +72,7 @@ func RunServerStart(ctx context.Context, opts *ServerStartOptions) error {
 	client := cat.NewCatClient(conn)
 
 	r := chi.NewRouter()
+	r.Use(middleware.Recoverer)
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("welcome"))
@@ -79,22 +89,11 @@ func RunServerStart(ctx context.Context, opts *ServerStartOptions) error {
 		}(time.Now())
 		catName := chi.URLParam(r, "catName")
 
-		//conn, err := grpc.Dial(opts.catServiceEndpoint, grpc.WithInsecure())
-		//if err != nil {
-		//	logger.Error("Could not gRPC connection", zap.Error(err))
-		//	w.Write([]byte(err.Error()))
-		//	return
-		//}
-		//defer conn.Close()
-		//
-		//client := cat.NewCatClient(conn)
-
 		message := &cat.GetMyCatMessage{TargetCat: catName}
 		res, err := client.GetMyCat(r.Context(), message)
 		if err != nil {
 			logger.Error("Failed GetMyCat service.", zap.Error(err), zap.String("TargetCat", catName))
-			w.Write([]byte(err.Error()))
-			return
+			panic("Failed GetMyCat service")
 		}
 
 		json.NewEncoder(w).Encode(res)
